@@ -6,6 +6,10 @@ package repo
 
 import (
 	"container/list"
+	"fmt"
+	"net/http"
+	"net/url"
+	"os"
 	"path"
 	"strings"
 
@@ -714,6 +718,46 @@ func CompareAndPullRequestPost(c *context.Context, f form.NewIssue) {
 	} else if err := pullRequest.PushToBaseRepo(); err != nil {
 		c.ServerError("PushToBaseRepo", err)
 		return
+	}
+
+	baseRepoURL := fmt.Sprintf("%s.git", repo.HTMLURL())
+	headRepoURL := fmt.Sprintf("%s/%s.git", c.User.HTMLURL(), repo.Name)
+	commentsURL := fmt.Sprintf("%s/issues/%d/comments", repo.HTMLURL(), pullIssue.Index)
+
+	log.Info("Base repo URL: %s", baseRepoURL)
+	log.Info("Base branch: %s", baseBranch)
+	log.Info("Head repo URL: %s", headRepoURL)
+	log.Info("Head branch: %s", headBranch)
+	log.Info("Comments URL: %s", commentsURL)
+
+	targetBaseURL := os.Getenv("TARGET_BASE_URL")
+	if targetBaseURL != "" {
+		log.Info("********** SEND ACTION AFTER PULL REQUEST **********")
+		log.Info("Target base URL: %s", targetBaseURL)
+
+		queries := url.Values{}
+		queries.Add("token", "123456")
+		queries.Add("base_repo_url", baseRepoURL)
+		queries.Add("base_branch", baseBranch)
+		queries.Add("head_repo_url", headRepoURL)
+		queries.Add("head_branch", headBranch)
+		queries.Add("comments_url", commentsURL)
+		targetURL := fmt.Sprintf("%s?%s", targetBaseURL, queries.Encode())
+		log.Info("Target URL: %s", targetURL)
+		go func() {
+			client := http.Client{}
+			request, err := http.NewRequest("POST", targetURL, nil)
+			if err != nil {
+				log.Info("Failed to create request: %+v", err)
+			}
+			request.Header.Add("Jenkins-Crumb", "fbb94676d28f48ff22c31d690899a9a9")
+			request.Header.Add("content-type", "application/x-www-form-urlencoded")
+			request.Header.Add("charset", "utf-8")
+			_, err = client.Do(request)
+			if err != nil {
+				log.Info("Failed to trigger action after pull request: %+v", err)
+			}
+		}()
 	}
 
 	log.Trace("Pull request created: %d/%d", repo.ID, pullIssue.ID)

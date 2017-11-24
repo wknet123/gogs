@@ -7,7 +7,6 @@ package context
 import (
 	"net/url"
 
-	"github.com/go-macaron/csrf"
 	"gopkg.in/macaron.v1"
 
 	"github.com/gogits/gogs/pkg/auth"
@@ -49,7 +48,7 @@ func Toggle(options *ToggleOptions) macaron.Handler {
 		}
 
 		if !options.SignOutRequired && !options.DisableCSRF && c.Req.Method == "POST" && !auth.IsAPIPath(c.Req.URL.Path) {
-			csrf.Validate(c.Context, c.csrf)
+			// csrf.Validate(c.Context, c.csrf)
 			if c.Written() {
 				return
 			}
