@@ -7,6 +7,7 @@ package repo
 import (
 	"container/list"
 	"fmt"
+	"io/ioutil"
 	"net/http"
 	"net/url"
 	"os"
@@ -734,9 +735,16 @@ func CompareAndPullRequestPost(c *context.Context, f form.NewIssue) {
 	if targetBaseURL != "" {
 		log.Info("********** SEND ACTION AFTER PULL REQUEST **********")
 		log.Info("Target base URL: %s", targetBaseURL)
-
+		token := os.Getenv("JENKINS_TOKEN")
+		if token == "" {
+			log.Warn("May communicate failure with Jenkins since missing JENKIN_TOKEN in env.")
+		}
+		crumb := os.Getenv("JENKINS_CRUMB")
+		if crumb == "" {
+			log.Warn("May communicate failure with Jenkins since missing JENKINS_CRUMB in env.")
+		}
 		queries := url.Values{}
-		queries.Add("token", "123456")
+		queries.Add("token", token)
 		queries.Add("base_repo_url", baseRepoURL)
 		queries.Add("base_branch", baseBranch)
 		queries.Add("head_repo_url", headRepoURL)
@@ -750,13 +758,19 @@ func CompareAndPullRequestPost(c *context.Context, f form.NewIssue) {
 			if err != nil {
 				log.Info("Failed to create request: %+v", err)
 			}
-			request.Header.Add("Jenkins-Crumb", "fbb94676d28f48ff22c31d690899a9a9")
+			request.Header.Add("Jenkins-Crumb", crumb)
 			request.Header.Add("content-type", "application/x-www-form-urlencoded")
 			request.Header.Add("charset", "utf-8")
-			_, err = client.Do(request)
+			resp, err := client.Do(request)
 			if err != nil {
 				log.Info("Failed to trigger action after pull request: %+v", err)
 			}
+			log.Info("Response status: %d", resp.StatusCode)
+			output, err := ioutil.ReadAll(resp.Body)
+			if err != nil {
+				log.Info("Failed to get data from response: %+v", err)
+			}
+			log.Info("Response: %s", string(output))
 		}()
 	}
 
