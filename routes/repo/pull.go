@@ -7,12 +7,11 @@ package repo
 import (
 	"container/list"
 	"fmt"
-	"io/ioutil"
-	"net/http"
 	"net/url"
 	"os"
 	"path"
 	"strings"
+	"time"
 
 	"github.com/Unknwon/com"
 	log "gopkg.in/clog.v1"
@@ -739,10 +738,6 @@ func CompareAndPullRequestPost(c *context.Context, f form.NewIssue) {
 		if token == "" {
 			log.Warn("May communicate failure with Jenkins since missing JENKIN_TOKEN in env.")
 		}
-		crumb := os.Getenv("JENKINS_CRUMB")
-		if crumb == "" {
-			log.Warn("May communicate failure with Jenkins since missing JENKINS_CRUMB in env.")
-		}
 		queries := url.Values{}
 		queries.Add("token", token)
 		queries.Add("base_repo_url", baseRepoURL)
@@ -751,27 +746,14 @@ func CompareAndPullRequestPost(c *context.Context, f form.NewIssue) {
 		queries.Add("head_branch", headBranch)
 		queries.Add("comments_url", commentsURL)
 		targetURL := fmt.Sprintf("%s?%s", targetBaseURL, queries.Encode())
+
 		log.Info("Target URL: %s", targetURL)
-		go func() {
-			client := http.Client{}
-			request, err := http.NewRequest("POST", targetURL, nil)
-			if err != nil {
-				log.Info("Failed to create request: %+v", err)
-			}
-			request.Header.Add("Jenkins-Crumb", crumb)
-			request.Header.Add("content-type", "application/x-www-form-urlencoded")
-			request.Header.Add("charset", "utf-8")
-			resp, err := client.Do(request)
-			if err != nil {
-				log.Info("Failed to trigger action after pull request: %+v", err)
-			}
-			log.Info("Response status: %d", resp.StatusCode)
-			output, err := ioutil.ReadAll(resp.Body)
-			if err != nil {
-				log.Info("Failed to get data from response: %+v", err)
-			}
-			log.Info("Response: %s", string(output))
-		}()
+
+		notifier := NewNotifier(targetURL)
+		go notifier.Notify()
+		key := c.User.Name + "_" + pullIssue.Repo.Name + "_" + headBranch
+		log.Info("Stored key: %s into cache.", key)
+		c.Cache.Put(key, notifier, int64(time.Hour*24*5))
 	}
 
 	log.Trace("Pull request created: %d/%d", repo.ID, pullIssue.ID)
@@ -824,4 +806,11 @@ func TriggerTask(c *context.Context) {
 	go models.HookQueue.Add(repo.ID)
 	go models.AddTestPullRequestTask(pusher, repo.ID, branch, true)
 	c.Status(202)
+
+	log.Info("%%%%%%%%%%%% NEW COMING PUSHED COMMIT %%%%%%%%%%%%")
+	key := pusher.Name + "_" + repo.Name + "_" + branch
+	log.Info("The Key %s exists in cache is %+v.", key, c.Cache.IsExist(key))
+	if notifier, ok := c.Cache.Get(key).(Notifier); ok {
+		go notifier.Notify()
+	}
 }
