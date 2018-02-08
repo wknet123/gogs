@@ -11,7 +11,6 @@ import (
 	"os"
 	"path"
 	"strings"
-	"time"
 
 	"github.com/Unknwon/com"
 	log "gopkg.in/clog.v1"
@@ -720,42 +719,6 @@ func CompareAndPullRequestPost(c *context.Context, f form.NewIssue) {
 		return
 	}
 
-	baseRepoURL := fmt.Sprintf("%s.git", repo.HTMLURL())
-	headRepoURL := fmt.Sprintf("%s/%s.git", c.User.HTMLURL(), repo.Name)
-	commentsURL := fmt.Sprintf("%s/issues/%d/comments", repo.HTMLURL(), pullIssue.Index)
-
-	log.Info("Base repo URL: %s", baseRepoURL)
-	log.Info("Base branch: %s", baseBranch)
-	log.Info("Head repo URL: %s", headRepoURL)
-	log.Info("Head branch: %s", headBranch)
-	log.Info("Comments URL: %s", commentsURL)
-
-	targetBaseURL := os.Getenv("TARGET_BASE_URL")
-	if targetBaseURL != "" {
-		log.Info("********** SEND ACTION AFTER PULL REQUEST **********")
-		log.Info("Target base URL: %s", targetBaseURL)
-		token := os.Getenv("JENKINS_TOKEN")
-		if token == "" {
-			log.Warn("May communicate failure with Jenkins since missing JENKIN_TOKEN in env.")
-		}
-		queries := url.Values{}
-		queries.Add("token", token)
-		queries.Add("base_repo_url", baseRepoURL)
-		queries.Add("base_branch", baseBranch)
-		queries.Add("head_repo_url", headRepoURL)
-		queries.Add("head_branch", headBranch)
-		queries.Add("comments_url", commentsURL)
-		targetURL := fmt.Sprintf("%s?%s", targetBaseURL, queries.Encode())
-
-		log.Info("Target URL: %s", targetURL)
-
-		notifier := NewNotifier(targetURL)
-		go notifier.Notify()
-		key := c.User.Name + "_" + pullIssue.Repo.Name + "_" + headBranch
-		log.Info("Stored key: %s into cache.", key)
-		c.Cache.Put(key, notifier, int64(time.Hour*24*5))
-	}
-
 	log.Trace("Pull request created: %d/%d", repo.ID, pullIssue.ID)
 	c.Redirect(c.Repo.RepoLink + "/pulls/" + com.ToStr(pullIssue.Index))
 }
@@ -772,7 +735,6 @@ func parseOwnerAndRepo(c *context.Context) (*models.User, *models.Repository) {
 		c.NotFoundOrServerError("GetRepositoryByName", errors.IsRepoNotExist, err)
 		return nil, nil
 	}
-
 	return owner, repo
 }
 
@@ -808,9 +770,31 @@ func TriggerTask(c *context.Context) {
 	c.Status(202)
 
 	log.Info("%%%%%%%%%%%% NEW COMING PUSHED COMMIT %%%%%%%%%%%%")
-	key := pusher.Name + "_" + repo.Name + "_" + branch
-	log.Info("The Key %s exists in cache is %+v.", key, c.Cache.IsExist(key))
-	if notifier, ok := c.Cache.Get(key).(Notifier); ok {
-		go notifier.Notify()
+	baseRepoURL := fmt.Sprintf("%s.git", repo.HTMLURL())
+
+	log.Info("Base repo URL: %s", baseRepoURL)
+
+	targetBaseURL := os.Getenv("target_base_url")
+	if targetBaseURL != "" {
+		log.Info("********** SEND ACTION AFTER PULL REQUEST **********")
+		targetBaseURL = strings.Replace(targetBaseURL, "<JOBNAME>", repo.Name, 1)
+		log.Info("Replaced target base URL: %s", targetBaseURL)
+		token := os.Getenv("jenkins_token")
+		if token == "" {
+			log.Warn("May communicate failure with Jenkins since missing JENKIN_TOKEN in env.")
+		}
+		queries := url.Values{}
+		queries.Add("token", token)
+		queries.Add("base_repo_url", baseRepoURL)
+		u, err := url.Parse(targetBaseURL)
+		if err != nil {
+			c.Error(500)
+			log.Trace("Failed to parse target base URL: %+v", err)
+			return
+		}
+		u.RawQuery = queries.Encode()
+		targetURL := fmt.Sprintf("%s", u.String())
+		log.Trace("Requested target URL: %s", targetURL)
+		go NewNotifier(targetURL).Notify()
 	}
 }

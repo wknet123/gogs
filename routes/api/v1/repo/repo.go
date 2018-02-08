@@ -372,6 +372,54 @@ func ListForks(c *context.APIContext) {
 	c.JSON(200, &apiForks)
 }
 
+func ForkRepo(c *context.APIContext) {
+
+	owner, baseRepo := parseOwnerAndRepo(c)
+	if c.Written() {
+		return
+	}
+	log.Trace("Owner: %s, base repo: %s", owner.Name, baseRepo.Name)
+
+	if baseRepo.IsBare {
+		c.Error(422, "", "Base repo currently is bare.")
+		return
+	}
+
+	_, has, err := models.HasForkedRepo(c.User.ID, baseRepo.ID)
+	if err != nil {
+		c.ServerError("HasForkedRepo", err)
+		return
+	} else if has {
+		log.Trace("Repo %s has been forked by %s.", baseRepo.FullName(), c.User.Name)
+		return
+	}
+
+	// Cannot fork to same owner
+	if c.User.ID == baseRepo.OwnerID {
+		c.Error(422, "", "Cannot fork to same owner.")
+		return
+	}
+
+	repoName := c.Query("repo_name")
+	description := c.Query("description")
+	log.Trace("Fork base repo name: %s as %s and with description: %s.", baseRepo.FullName(), repoName, description)
+
+	_, err = models.ForkRepository(owner, c.User, baseRepo, repoName, description)
+	if err != nil {
+		switch {
+		case models.IsErrRepoAlreadyExist(err):
+			c.Error(422, "New owner has same repo.", err)
+		case models.IsErrNameReserved(err):
+			c.Error(422, "Form name reserved.", err)
+		case models.IsErrNamePatternNotAllowed(err):
+			c.Error(422, "Form name pattern not alllowed.", err)
+		default:
+			c.ServerError("ForkPost", err)
+		}
+	}
+	log.Trace("Repository forked from '%s' -> '%s'", baseRepo.FullName(), repoName)
+}
+
 func MirrorSync(c *context.APIContext) {
 	_, repo := parseOwnerAndRepo(c)
 	if c.Written() {
